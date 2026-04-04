@@ -9,6 +9,7 @@ import requests
 import pyttsx3
 import datetime
 
+current_game = None 
 recogniser = sr.Recognizer()
 pygame.mixer.init()
 
@@ -47,6 +48,27 @@ weather_descriptions = {
     82: "heavy showers",
     95: "thunderstorm"
 }
+
+def truth_dare():
+    global current_game
+    current_game = "truth_or_dare"
+    play("truth_dare.wav") 
+
+def handle_truth_dare(speech):
+    global current_game
+    
+    if current_game == "truth_or_dare":
+        if "truth" in speech:
+            truths = ["truth1.wav", "truth2.wav", "truth3.wav", "truth4.wav", "truth5.wav"]
+            play(random.choice(truths))
+            current_game = None     
+        elif "dare" in speech:
+            dares = ["dare1.wav", "dare2.wav", "dare3.wav", "dare4.wav", "dare5.wav"]
+            play(random.choice(dares))
+            current_game = None
+        else:
+            play("wuss.wav")
+            current_game = None
 
 def get_weather():
     try:
@@ -112,6 +134,9 @@ def respond(speech):
 
     elif "eighteenth" in speech:
         birthday(18)
+
+    elif any(word in speech for word in ["truth or dare", "truth and dare"]):
+        truth_dare()
 
     elif "joke" in speech:
         jokes = ["joke1.wav", "joke2.wav", "joke3.wav", "joke4.wav", "joke5.wav", "joke6.wav", "joke7.wav", "joke8.wav", "joke9.wav", "joke10.wav"]
@@ -198,7 +223,10 @@ while running:
     try:
         speech = recogniser.recognize_google(audio)
         print("You said: " + speech)
-        running = respond(speech)
+        if current_game == "truth_or_dare":
+            handle_truth_dare(speech)
+        else:
+            running = respond(speech)
 
     except sr.UnknownValueError:
         print("Couldn't hear that")
