@@ -1,6 +1,3 @@
-# Billy Bot is basically Alexa. All the responses currently require me to record a clip of my voice. This is because im a narcissist lol and want to talk to myself.
-# All the lines that say 'play("smth.wav")' can be replaced with 'say("smth")' if you want to use the text to speech instead. I just prefer the sound of my own voice.
-
 import speech_recognition as sr
 import os
 import random
@@ -10,12 +7,14 @@ import pyttsx3
 import datetime
 from vosk import Model, KaldiRecognizer
 import json
-import queue
 import threading
 import time
 from datetime import timedelta
 from word2number import w2n
-'''import tinytuya''' # I was going to add smart home control but it was a pain to set up cause I have to setup a tuya developer account and I couldnt be bothered. If you want to add it just uncomment this line and figure it out yourself
+
+# ───────────────────────────────
+# INIT
+# ───────────────────────────────
 
 VOSK_MODEL_PATH = "vosk-model-small-en-us-0.15"
 if os.path.exists(VOSK_MODEL_PATH):
@@ -27,41 +26,67 @@ else:
     vosk_available = False
     print("Vosk model not found.")
 
-q = queue.Queue()
-def vosk_callback(indata, frames, timestamp, status):
-    q.put(bytes(indata))
-
 current_game = None
 current_number = None
 start_time = time.monotonic()
-GNEWS_KEY = "aee18f6044bb6c15e78b1d8316cbca04"
+GNEWS_KEY = "YOUR_KEY_HERE" # Get your free key at https://gnews.io/ (limited to 100 requests/day which is why I am not giving out mine ):<)
 
 recogniser = sr.Recognizer()
 pygame.mixer.init()
 speaker = pyttsx3.init()
 
+VOICE_PATH = os.path.join(os.getcwd(), "Voices")
+audio_lock = threading.RLock()
+
+# ───────────────────────────────
+# AUDIO SYSTEM
+# ───────────────────────────────
+
+def wait_audio():
+    while pygame.mixer.music.get_busy():
+        time.sleep(0.05)
+
 def say(text):
-    print("Billy: " + text)
-    speaker.say(text)
-    speaker.runAndWait()
+    with audio_lock:
+        pygame.mixer.music.stop()
+        print("Billy:", text)
+        speaker.say(text)
+        speaker.runAndWait()
+        time.sleep(0.15)
 
 def play(filename):
-    path = os.path.join("voices", filename)
-    if os.path.exists(path):
-        pygame.mixer.music.load(path)
-        pygame.mixer.music.play()
-        while pygame.mixer.music.get_busy():
-            pass
-    else:
-        print("Missing clip: " + filename)
+    with audio_lock:
+        wait_audio()
 
-def keep_alive():
-    if current_game is None:
-        path = os.path.join("voices", "silence.wav")
+        if not filename.endswith(".mp3"):
+            filename += ".mp3"
+
+        path = os.path.join(VOICE_PATH, filename)
+
         if os.path.exists(path):
             pygame.mixer.music.load(path)
             pygame.mixer.music.play()
-    threading.Timer(180, keep_alive).start()
+            wait_audio()
+            time.sleep(0.1)
+        else:
+            print("Missing clip:", filename)
+            say("Missing audio file")
+
+# ───────────────────────────────
+# KEEP ALIVE
+# ───────────────────────────────
+
+def keep_alive():
+    while True:
+        time.sleep(180)
+        if current_game is None and not pygame.mixer.music.get_busy():
+            play("silence")
+
+threading.Thread(target=keep_alive, daemon=True).start()
+
+# ───────────────────────────────
+# WEATHER
+# ───────────────────────────────
 
 weather_descriptions = {
     0: "clear sky",
@@ -82,72 +107,66 @@ weather_descriptions = {
     95: "thunderstorm"
 }
 
-def get_uptime():
-    uptime = str(timedelta(seconds=int(time.monotonic() - start_time)))
-    play("uptime.wav")
-    say(uptime)
+def get_weather():
+    try:
+        weather_raw = requests.get(
+            "https://api.open-meteo.com/v1/forecast?latitude=-27.4705&longitude=153.0260&current_weather=true",
+            timeout=5
+        )
+        weather_data = weather_raw.json()
+
+        cw = weather_data.get("current_weather", {})
+        code = cw.get("weathercode", -1)
+        temp = cw.get("temperature", 0)
+        wind = cw.get("windspeed", 0)
+        sky = weather_descriptions.get(code, "unknown")
+
+        play("temperature")
+        say(str(temp))
+
+        play("sky")
+        say(sky)
+
+        play("wind")
+        say(str(wind))
+
+    except:
+        play("weathererror")
+
+# ───────────────────────────────
+# TIME / DATE
+# ───────────────────────────────
 
 def get_time():
-    now = datetime.datetime.now().strftime("%I:%M %p")
-    play("thetimeis.wav")
-    say(now)
+    play("thetimeis")
+    say(datetime.datetime.now().strftime("%I:%M %p"))
 
 def get_date():
     date = datetime.datetime.now()
-    day = date.strftime("%A")
-    month = date.strftime("%B")
-    num = date.strftime("%d")
-    year = date.strftime("%Y")
-    play("todayis.wav")
-    say(f"{day}, {month} {num}, {year}")
+    play("todayis")
+    say(f"{date.strftime('%A')}, {date.strftime('%B')} {date.strftime('%d')}, {date.strftime('%Y')}")
 
 def get_day():
-    day = datetime.datetime.now().strftime("%A")
-    play("todayis.wav")
-    say(day)
+    play("todayis")
+    say(datetime.datetime.now().strftime("%A"))
 
-def get_weather():
-    try:
-        weather_raw = requests.get("https://api.open-meteo.com/v1/forecast?latitude=-27.4705&longitude=153.0260&current_weather=true", timeout=5)
-        weather_data = weather_raw.json()
-        sky = weather_descriptions.get(weather_data['current_weather']['weathercode'])
-        temp = weather_data['current_weather']['temperature']
-        wind = weather_data['current_weather']['windspeed']
-        play("temperature.wav")
-        say(str(temp))
-        if weather_data['current_weather']['weathercode'] in weather_descriptions:
-            play("sky.wav")
-            say(sky)
-        else:
-            play("skyunknown.wav")
-        play("wind.wav")
-        say(str(wind))
-    except:
-        play("weathererror.wav")
+def get_uptime():
+    play("uptime")
+    say(str(timedelta(seconds=int(time.monotonic() - start_time))))
 
-def birthday(year):
-    if year == 16:
-        target = datetime.datetime(2028, 2, 29)
-        seconds = int((target - datetime.datetime.now()).total_seconds())
-        play("birthday16.wav")
-        say(str(seconds))
-    elif year == 18:
-        target = datetime.datetime(2030, 2, 28)
-        seconds = int((target - datetime.datetime.now()).total_seconds())
-        play("birthday18.wav")
-        say(str(seconds))
-    else:
-        play("birthdayunknown.wav")
+# ───────────────────────────────
+# TIMER
+# ───────────────────────────────
 
-# THIS IS THE MOST BEAUTIFUL THING IVE EVER CREATED I DESERVE A NOBEL PRIZE FOR THIS FUNCTION. IT CAN UNDERSTAND ANY WAY OF SAYING A TIMER. TRY IT OUT, SAY "BILLY SET A TIMER FOR 2 HOURS 15 MINUTES AND 30 SECONDS" OR "BILLY REMIND ME IN 45 MINUTES" OR ANY OTHER VARIATION YOU CAN THINK OF, IT WILL WORK.
 def timer(speech):
     words = speech.lower().split()
     total_seconds = 0
     last_number = None
+
     for word in words:
         try:
             last_number = w2n.word_to_num(word)
-        except ValueError:
+        except:
             if last_number is not None:
                 if word in ["second", "seconds", "sec", "secs"]:
                     total_seconds += last_number
@@ -158,12 +177,17 @@ def timer(speech):
                 elif word in ["hour", "hours", "hr", "hrs"]:
                     total_seconds += last_number * 3600
                     last_number = None
+
     if total_seconds == 0:
-        play("timerror.wav")
+        play("timerror")
         return
-    t = threading.Timer(total_seconds, play, args=["buzzer.wav"])
-    t.start()
-    play("timer.wav")
+
+    threading.Timer(total_seconds, play, args=["buzzer"]).start()
+    play("timer")
+
+# ───────────────────────────────
+# CALCULATOR
+# ───────────────────────────────
 
 def calculate(speech):
     speech = speech.replace("times", "*")
@@ -171,107 +195,142 @@ def calculate(speech):
     speech = speech.replace("divided by", "/")
     speech = speech.replace("plus", "+")
     speech = speech.replace("minus", "-")
-    speech = speech.replace("subtract", "-")
+
     words = speech.split()
     math_str = ""
+
     for word in words:
         try:
             math_str += str(w2n.word_to_num(word)) + " "
         except:
             if any(op in word for op in ["+", "-", "*", "/"]):
                 math_str += word + " "
+
     try:
         result = eval(math_str.strip())
-        play("answer.wav")
+        play("answer")
         say(str(result))
     except:
-        play("matherror.wav")
+        play("matherror")
+
+# ───────────────────────────────
+# BIRTHDAYS
+# ───────────────────────────────
+
+def birthday(year):
+    if year == 16:
+        target = datetime.datetime(2028, 2, 29)
+        seconds = int((target - datetime.datetime.now()).total_seconds())
+        play("birthday16")
+        say(str(seconds))
+    elif year == 18:
+        target = datetime.datetime(2030, 2, 28)
+        seconds = int((target - datetime.datetime.now()).total_seconds())
+        play("birthday18")
+        say(str(seconds))
+    else:
+        play("birthdayunknown")
+
+# ───────────────────────────────
+# GAMES
+# ───────────────────────────────
 
 def truth_dare():
     global current_game
     current_game = "truth_or_dare"
-    play("truth_dare.wav")
+    play("truth_dare")
 
 def handle_truth_dare(speech):
     global current_game
     if "truth" in speech:
-        truths = ["truth1.wav", "truth2.wav", "truth3.wav", "truth4.wav", "truth5.wav"]
-        play(random.choice(truths))
-        current_game = None
+        play(random.choice(["truth1","truth2","truth3","truth4","truth5"]))
     elif "dare" in speech:
-        dares = ["dare1.wav", "dare2.wav", "dare3.wav", "dare4.wav", "dare5.wav"]
-        play(random.choice(dares))
-        current_game = None
+        play(random.choice(["dare1","dare2","dare3","dare4","dare5"]))
     else:
-        play("wuss.wav")
-        current_game = None
+        play("wuss")
+    current_game = None
 
 def start_number_guess():
     global current_game, current_number
     current_number = random.randint(1, 100)
     current_game = "number_guess"
-    play("number_guess.wav")
+    play("number_guess")
 
 def handle_number_guess(speech):
     global current_game, current_number
     try:
         guess = w2n.word_to_num(speech)
         if guess < current_number:
-            play("higher.wav")
+            play("higher")
         elif guess > current_number:
-            play("lower.wav")
+            play("lower")
         else:
-            play("correct.wav")
+            play("correct")
             current_game = None
             current_number = None
     except:
-        play("guesserror.wav")
+        play("guesserror")
 
 def start_news():
     global current_game
     current_game = "news"
-    play("newswhat.wav")
+    play("newswhat")
 
 def handle_news(speech):
     global current_game
     try:
+        clean = speech.lower()
+        for word in ["billy","news","what's","whats","in the","tell me","about","on"]:
+            clean = clean.replace(word, "")
+        clean = clean.strip()
+        if clean == "":
+            clean = "world"
+
         response = requests.get(
-            f"https://gnews.io/api/v4/search?q={speech}&token={GNEWS_KEY}&lang=en&max=1",
+            f"https://gnews.io/api/v4/search?q={clean}&token={GNEWS_KEY}&lang=en&max=1",
             timeout=5
         )
         data = response.json()
-        article = data['articles'][0]
-        play("newsintro.wav")
-        say(article['title'])
-        play("newsdesc.wav")
-        say(article['description'])
-        current_game = None
-    except:
-        play("newserror.wav")
-        current_game = None
 
+        if "articles" in data and len(data["articles"]) > 0:
+            article = data["articles"][0]
+            play("newsintro")
+            say(article["title"])
+            play("newsdesc")
+            say(article["description"])
+        else:
+            play("newserror")
+    except:
+        play("newserror")
+
+    current_game = None
+
+# ───────────────────────────────
+# MAIN RESPONDER
+# ───────────────────────────────
+
+
+
+# You can add more commands and responses to this function. Just make sure to keep the structure consistent for it to work properly.
+# Also be mindful how far up the chain you put new commands, as it will check them in order and execute the first one that matches. 
+# For example, if you put a command that checks for "hello" after the command that checks for "how are you",
+# it will never trigger since "hello" is contained in "how are you". So just keep that in mind when adding new stuff.
 def respond(speech):
     speech = speech.lower()
 
     if "billy" not in speech:
         return True
 
-    elif "actually" in speech and "weather" in speech:
+    if "weather" in speech:
         get_weather()
 
-    elif "actually" in speech and "date" in speech:
-        get_date()
-
-    elif "actually" in speech and "news" in speech:
+    elif "news" in speech:
         start_news()
 
-    elif "actually" in speech and any(word in speech for word in ["calculate", "times", "divided by", "plus", "minus", "multiplied"]):
-        calculate(speech)
-
-    elif any(word in speech for word in ["timer", "set a timer", "countdown", "remind me in", "reminder", "remind her", "thyme or", "thymor", "time oar", "thyme oar"]):
+    elif any(word in speech for word in ["timer","set a timer","countdown","remind me in","reminder"]):
         timer(speech)
 
-    elif any(word in speech for word in ["number", "guess", "guessing game"]):
+    elif any(word in speech for word in ["number","guess","guessing game"]):
         start_number_guess()
 
     elif "sixteenth" in speech:
@@ -280,168 +339,187 @@ def respond(speech):
     elif "eighteenth" in speech:
         birthday(18)
 
-    elif any(word in speech for word in ["what time", "the time", "time is it"]):
+    elif any(word in speech for word in ["what time","the time","time is it"]):
         get_time()
 
-    elif any(word in speech for word in ["what day", "the day", "day is it", "what's today"]):
+    elif "date" in speech:
+        get_date()
+
+    elif any(word in speech for word in ["what day","the day","day is it","what's today"]):
         get_day()
 
     elif "uptime" in speech or "how long have you been" in speech:
         get_uptime()
 
-    elif any(word in speech for word in ["truth or dare", "truth and dare"]):
+    elif any(op in speech for op in ["plus","minus","times","divided"]):
+        calculate(speech)
+
+    elif any(word in speech for word in ["truth or dare","truth and dare"]):
         truth_dare()
 
     elif "joke" in speech:
-        jokes = ["joke1.wav", "joke2.wav", "joke3.wav", "joke4.wav", "joke5.wav", "joke6.wav", "joke7.wav", "joke8.wav", "joke9.wav", "joke10.wav"]
-        play(random.choice(jokes))
+        play(random.choice(["joke1","joke2","joke3","joke4","joke5",
+                             "joke6","joke7","joke8","joke9","joke10"]))
 
-    elif any(word in speech for word in ["roast", "flame", "diss", "grill"]):
-        roasts = ["roast1.wav", "roast2.wav", "roast3.wav", "roast4.wav", "roast5.wav"]
-        play(random.choice(roasts))
+    elif any(word in speech for word in ["roast","flame","diss","grill"]):
+        play(random.choice(["roast1","roast2","roast3","roast4","roast5"]))
 
-    elif any(word in speech for word in ["hype", "pump", "motivate", "inspire", "gas me"]):
-        hypes = ["hype1.wav", "hype2.wav", "hype3.wav", "hype4.wav", "hype5.wav"]
-        play(random.choice(hypes))
+    elif any(word in speech for word in ["hype","pump","motivate","inspire","gas me"]):
+        play(random.choice(["hype1","hype2","hype3","hype4","hype5"]))
 
-    elif any(word in speech for word in ["affirm me", "affirmation", "encourage me"]):
-        affirmations = ["affirm1.wav", "affirm2.wav", "affirm3.wav", "affirm4.wav", "affirm5.wav", "affirm6.wav", "affirm7.wav", "affirm8.wav", "affirm9.wav", "affirm10.wav"]
-        play(random.choice(affirmations))
+    elif any(word in speech for word in ["affirm me","affirmation","encourage me"]):
+        play(random.choice(["affirm1","affirm2","affirm3","affirm4","affirm5",
+                             "affirm6","affirm7","affirm8","affirm9","affirm10"]))
 
-    elif any(word in speech for word in ["insult me", "bully me", "be mean", "bring me down"]):
-        deaffirmations = ["deaffirm1.wav", "deaffirm2.wav", "deaffirm3.wav", "deaffirm4.wav", "deaffirm5.wav", "deaffirm6.wav", "deaffirm7.wav", "deaffirm8.wav", "deaffirm9.wav", "deaffirm10.wav"]
-        play(random.choice(deaffirmations))
+    elif any(word in speech for word in ["insult me","bully me","be mean","bring me down"]):
+        play(random.choice(["deaffirm1","deaffirm2","deaffirm3","deaffirm4","deaffirm5",
+                             "deaffirm6","deaffirm7","deaffirm8","deaffirm9","deaffirm10"]))
 
-    elif any(word in speech for word in ["how do i look", "fit check", "rate my fit", "rate the fit", "drip check", "outfit check", "am i dripped out"]):
-        fitcheck = ["fitcheck1.wav", "fitcheck2.wav", "fitcheck3.wav", "fitcheck4.wav", "fitcheck5.wav"]
-        play(random.choice(fitcheck))
+    elif any(word in speech for word in ["how do i look","fit check","rate my fit",
+                                          "rate the fit","drip check","outfit check","am i dripped out"]):
+        play(random.choice(["fitcheck1","fitcheck2","fitcheck3","fitcheck4","fitcheck5"]))
 
-    elif any(word in speech for word in ["magic eight ball", "eight ball", "8 ball", "magic ate ball", "magic eight", "magic 8", "ate ball"]):
-        eightball = ["eightball1.wav", "eightball2.wav", "eightball3.wav", "eightball4.wav", "eightball5.wav", "eightball6.wav", "eightball7.wav", "eightball8.wav", "eightball9.wav", "eightball10.wav"]
-        play(random.choice(eightball))
+    elif any(word in speech for word in ["magic eight ball","eight ball","8 ball",
+                                          "magic ate ball","magic eight","magic 8","ate ball"]):
+        play(random.choice(["eightball1","eightball2","eightball3","eightball4","eightball5",
+                             "eightball6","eightball7","eightball8","eightball9","eightball10"]))
 
-    elif any(word in speech for word in ["flip a coin", "coin flip", "heads or tails"]):
-        play(random.choice(["heads.wav", "tails.wav"]))
+    elif any(word in speech for word in ["flip a coin","coin flip","heads or tails"]):
+        play(random.choice(["heads","tails"]))
 
-    elif any(word in speech for word in ["am i cooked", "is it over", "am i done"]):
-        play(random.choice(["cooked_yes.wav", "cooked_no.wav"]))
+    elif any(word in speech for word in ["am i cooked","is it over","am i done"]):
+        play(random.choice(["cooked_yes","cooked_no"]))
 
-    elif any(word in speech for word in ["should i", "give me a sign", "yes or no", "help me decide"]):
-        play(random.choice(["yes.wav", "no.wav"]))
+    elif any(word in speech for word in ["should i","give me a sign","yes or no","help me decide"]):
+        play(random.choice(["yes","no"]))
 
-    elif any(word in speech for word in ["i'm sad", "im sad", "i am sad", "feeling sad", "i feel sad", "i'm upset", "im upset"]):
-        play(random.choice(["sad1.wav", "sad2.wav", "sad3.wav"]))
+    elif any(word in speech for word in ["i'm sad","im sad","i am sad","feeling sad","i feel sad","i'm upset","im upset"]):
+        play(random.choice(["sad1","sad2","sad3"]))
 
-    elif any(word in speech for word in ["i'm tired", "im tired", "i am tired", "so tired", "exhausted"]):
-        play("tired.wav")
+    elif any(word in speech for word in ["i'm tired","im tired","i am tired","so tired","exhausted"]):
+        play("tired")
 
-    elif any(word in speech for word in ["i'm hungry", "im hungry", "i am hungry", "starving", "famished"]):
-        play(random.choice(["hungry1.wav", "hungry2.wav", "hungry3.wav"]))
+    elif any(word in speech for word in ["i'm hungry","im hungry","i am hungry","starving","famished"]):
+        play(random.choice(["hungry1","hungry2","hungry3"]))
 
-    elif any(word in speech for word in ["i'm bored", "im bored", "i am bored", "nothing to do", "entertain me", "so bored"]):
-        play(random.choice(["bored1.wav", "bored2.wav", "bored3.wav"]))
+    elif any(word in speech for word in ["i'm bored","im bored","i am bored","nothing to do","entertain me","so bored"]):
+        play(random.choice(["bored1","bored2","bored3"]))
 
-    elif any(word in speech for word in ["i love you", "love you", "i luv you"]):
-        play("loveyou.wav")
+    elif any(word in speech for word in ["i love you","love you","i luv you"]):
+        play("loveyou")
 
-    elif any(word in speech for word in ["i hate you", "hate you", "i don't like you"]):
-        play("hateyou.wav")
+    elif any(word in speech for word in ["i hate you","hate you","i don't like you"]):
+        play("hateyou")
 
-    elif any(word in speech for word in ["you're stupid", "youre stupid", "you are stupid", "you're dumb", "youre dumb"]):
-        play("stupid.wav")
+    elif any(word in speech for word in ["you're stupid","youre stupid","you are stupid","you're dumb","youre dumb"]):
+        play("stupid")
 
-    elif any(word in speech for word in ["you're smart", "youre smart", "you're amazing", "youre amazing", "you're the best", "youre the best"]):
-        play("smart.wav")
+    elif any(word in speech for word in ["you're smart","youre smart","you're amazing","youre amazing","you're the best","youre the best"]):
+        play("smart")
 
-    elif any(word in speech for word in ["are you real", "are you alive", "are you human", "are you a robot"]):
-        play("areyoureal.wav")
+    elif any(word in speech for word in ["are you real","are you alive","are you human","are you a robot"]):
+        play("areyoureal")
 
-    elif any(word in speech for word in ["better than siri", "are you better than siri"]):
-        play("bettersiri.wav")
+    elif any(word in speech for word in ["better than siri","are you better than siri"]):
+        play("bettersiri")
 
-    elif any(word in speech for word in ["better than alexa", "are you better than alexa"]):
-        play("betteralexa.wav")
+    elif any(word in speech for word in ["better than alexa","are you better than alexa"]):
+        play("betteralexa")
 
-    elif any(word in speech for word in ["what can you do", "what do you do", "your features"]):
-        play("whatcanyoudo.wav")
+    elif any(word in speech for word in ["what can you do","what do you do","your features"]):
+        play("whatcanyoudo")
 
-    elif any(word in speech for word in ["what are you doing", "what are you up to", "whatcha doing"]):
-        play("whatdoing.wav")
+    elif any(word in speech for word in ["what are you doing","what are you up to","whatcha doing"]):
+        play("whatdoing")
 
-    elif any(word in speech for word in ["i'm back", "im back", "i am back", "i'm home", "im home"]):
-        play("imback.wav")
+    elif any(word in speech for word in ["i'm back","im back","i am back","i'm home","im home"]):
+        play("imback")
 
-    elif any(word in speech for word in ["i'm leaving", "im leaving", "i am leaving", "goodbye", "see you later", "i'm going"]):
-        play("leaving.wav")
+    elif any(word in speech for word in ["i'm leaving","im leaving","i am leaving","goodbye","see you later","i'm going"]):
+        play("leaving")
 
-    elif any(word in speech for word in ["i miss you", "missed you"]):
-        play("missyou.wav")
+    elif any(word in speech for word in ["i miss you","missed you"]):
+        play("missyou")
 
-    elif any(word in speech for word in ["you're funny", "youre funny", "that was funny", "good one"]):
-        play("funny.wav")
+    elif any(word in speech for word in ["you're funny","youre funny","that was funny","good one"]):
+        play("funny")
 
-    elif any(word in speech for word in ["good morning", "morning", "rise and shine", "wake up", "mourn in", "mornin'"]):
-        play(random.choice(["morning1.wav", "morning2.wav", "morning3.wav", "morning4.wav", "morning5.wav"]))
+    elif any(word in speech for word in ["good morning","morning","rise and shine","wake up","mourn in","mornin'"]):
+        play(random.choice(["morning1","morning2","morning3","morning4","morning5"]))
 
-    elif any(word in speech for word in ["good night", "night", "going to bed", "going to sleep", "goodnight", "nite", "knight"]):
-        play(random.choice(["goodnight1.wav", "goodnight2.wav", "goodnight3.wav", "goodnight4.wav", "goodnight5.wav"]))
+    elif any(word in speech for word in ["good night","night","going to bed","going to sleep","goodnight","nite","knight"]):
+        play(random.choice(["goodnight1","goodnight2","goodnight3","goodnight4","goodnight5"]))
 
-    elif any(word in speech for word in ["how are you", "you good", "how you doing", "you alright", "how you been"]):
-        play("feeling.wav")
+    elif any(word in speech for word in ["how are you","you good","how you doing","you alright","how you been"]):
+        play("feeling")
 
-    elif any(word in speech for word in ["who are you", "what's your name", "identify yourself", "why are you in my room"]):
-        play("name.wav")
+    elif any(word in speech for word in ["who are you","what's your name","identify yourself","why are you in my room"]):
+        play("name")
 
-    elif any(word in speech for word in ["thank you", "thanks", "cheers", "good job", "well done"]):
-        play("thanks.wav")
+    elif any(word in speech for word in ["thank you","thanks","cheers","good job","well done"]):
+        play("thanks")
 
-    elif any(word in speech for word in ["shut up", "be quiet", "shush", "zip it", "hush", "quiet", "silence", "hell up", "shutup"]):
-        play(random.choice(["shutup1.wav", "shutup2.wav", "shutup3.wav", "shutup4.wav", "shutup5.wav"]))
+    elif any(word in speech for word in ["shut up","be quiet","shush","zip it","hush","quiet","silence","hell up","shutup"]):
+        play(random.choice(["shutup1","shutup2","shutup3","shutup4","shutup5"]))
 
     elif "emergency stop protocol" in speech:
-        play("stop.wav")
+        play("stop")
         return False
 
-    elif any(word in speech for word in ["hello", "hey", "hi", "yo", "sup", "wassup", "wagwan", "wsg", "wsp", "what's up", "whats up", "what's good", "what it do"]):
-        play(random.choice(["greeting1.wav", "greeting2.wav", "greeting3.wav"]))
+    elif any(word in speech for word in ["hello","hey","hi","yo","sup","wassup","wagwan","wsg","wsp",
+                                          "what's up","whats up","what's good","what it do"]):
+        play(random.choice(["greeting1","greeting2","greeting3"]))
 
     else:
-        play(random.choice(["unknown1.wav", "unknown2.wav", "unknown3.wav"]))
+        play(random.choice(["unknown1","unknown2","unknown3"]))
 
     return True
 
+# ───────────────────────────────
+# MAIN LOOP
+# ───────────────────────────────
+
 print("Billy is online. Say 'billy' to wake.")
-play("startup.wav")
-keep_alive()
+play("startup")
 
 running = True
-while running:
-    with sr.Microphone() as mic:
+
+with sr.Microphone() as source:
+    recogniser.adjust_for_ambient_noise(source, duration=1)
+
+    while running:
         print("Listening...")
-        recogniser.adjust_for_ambient_noise(mic, duration=0.5)
-        audio = recogniser.listen(mic)
 
-    try:
-        speech = recogniser.recognize_google(audio, request_timeout=3)
-        print("You said: " + speech)
-        if current_game == "truth_or_dare":
-            handle_truth_dare(speech)
-        elif current_game == "number_guess":
-            handle_number_guess(speech)
-        elif current_game == "news":
-            handle_news(speech)
-        else:
-            running = respond(speech)
+        try:
+            audio = recogniser.listen(source, timeout=5, phrase_time_limit=10)
+        except sr.WaitTimeoutError:
+            continue
 
-    except sr.RequestError:
-        print("Google unavailable, trying Vosk...")
-        if vosk_available:
-            audio_data = audio.get_raw_data(convert_rate=16000, convert_width=2)
-            if vosk_recogniser.AcceptWaveform(audio_data):
-                result = json.loads(vosk_recogniser.Result())
+        try:
+            speech = recogniser.recognize_google(audio)
+            print("You said:", speech)
+
+            if current_game == "truth_or_dare":
+                handle_truth_dare(speech)
+            elif current_game == "number_guess":
+                handle_number_guess(speech)
+            elif current_game == "news":
+                handle_news(speech)
+            else:
+                running = respond(speech)
+
+        except sr.RequestError:
+            print("Google failed, switching to Vosk...")
+            if vosk_available:
+                data = audio.get_raw_data(convert_rate=16000, convert_width=2)
+                if vosk_recogniser.AcceptWaveform(data):
+                    result = json.loads(vosk_recogniser.Result())
+                else:
+                    result = json.loads(vosk_recogniser.PartialResult())
+
                 speech = result.get("text", "")
                 if speech:
-                    print("You said (Vosk): " + speech)
+                    print("You said (Vosk):", speech)
                     if current_game == "truth_or_dare":
                         handle_truth_dare(speech)
                     elif current_game == "number_guess":
@@ -450,12 +528,6 @@ while running:
                         handle_news(speech)
                     else:
                         running = respond(speech)
-                else:
-                    print("Vosk couldn't hear that either")
-            else:
-                print("Vosk couldn't process audio")
-        else:
-            print("Vosk not available, no fallback")
 
-    except sr.UnknownValueError:
-        print("Couldn't hear that")
+        except sr.UnknownValueError:
+            print("Couldn't hear that")
