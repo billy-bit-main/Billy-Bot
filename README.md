@@ -1,3 +1,5 @@
+--DISCLAIMER!!!!--
+FOR A FAR MORE EXTENSIVE AND DETAILED EXPLANATION OF THE PROJECT. VISIT https://billy-bit.com/python/billy-bot
 Billy Bot
 
 A Raspberry Pi–based voice assistant designed for continuous operation, combining speech recognition, audio playback, API integration, and offline fallback systems.
